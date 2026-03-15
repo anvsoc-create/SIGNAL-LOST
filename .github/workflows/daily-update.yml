@@ -1,0 +1,69 @@
+name: Daily Living README Update
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # 9am UTC daily
+  workflow_dispatch:
+
+jobs:
+  daily-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate new README and lore
+        run: |
+          python scripts/generate.py
+
+      - name: Configure git
+        run: |
+          git config user.name "living-readme-bot"
+          git config user.email "living-readme-bot@users.noreply.github.com"
+
+      - name: Get current day from lore.json
+        id: lore_day
+        run: |
+          python - << 'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          data = json.loads(Path("lore.json").read_text(encoding="utf-8"))
+          day = data.get("day", 1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"day={day}\n")
+          PY
+
+      - name: Commit and push changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          day="${{ steps.lore_day.outputs.day }}"
+          git add README.md lore.json
+          git commit -m "🤖 Day ${day} update"
+          git push
+
