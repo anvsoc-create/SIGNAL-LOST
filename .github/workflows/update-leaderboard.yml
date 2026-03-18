@@ -58,7 +58,7 @@ lb.add_solve(
     day=int('${{ steps.info.outputs.day }}'),
     is_first=${{ steps.first.outputs.is_first }}
 )
-          "
+"
       
       - name: Commit leaderboard changes
         run: |

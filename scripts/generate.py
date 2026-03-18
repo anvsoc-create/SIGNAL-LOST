@@ -14,6 +14,7 @@ load_dotenv()
 
 LORE_PATH = Path("lore.json")
 README_PATH = Path("README.md")
+ANSWERS_PATH = Path("data/answers.json")
 
 
 def load_lore() -> Dict[str, Any]:
@@ -32,6 +33,31 @@ def load_lore() -> Dict[str, Any]:
 
 def save_lore(lore: Dict[str, Any]) -> None:
     LORE_PATH.write_text(json.dumps(lore, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def load_answers() -> Dict[str, Any]:
+    """Load existing answers from data/answers.json"""
+    if not ANSWERS_PATH.exists():
+        return {}
+    return json.loads(ANSWERS_PATH.read_text(encoding="utf-8"))
+
+
+def save_answer(day: int, puzzle_type: str, answer: Optional[str], hints: List[str]) -> None:
+    """Save answer for a specific day to data/answers.json"""
+    answers = load_answers()
+    
+    day_key = f"day_{day}"
+    answers[day_key] = {
+        "type": puzzle_type,
+        "answer": answer if answer else "",
+        "hint_1": hints[0] if len(hints) > 0 else "Think carefully about the problem...",
+        "hint_2": hints[1] if len(hints) > 1 else "Review the puzzle description...",
+        "hint_3": hints[2] if len(hints) > 2 else "You're very close to the solution..."
+    }
+    
+    # Save back to file
+    ANSWERS_PATH.parent.mkdir(exist_ok=True)
+    ANSWERS_PATH.write_text(json.dumps(answers, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def get_github_client() -> Github:
@@ -99,7 +125,6 @@ def get_recent_activity() -> Tuple[List[str], List[str]]:
 
 
 def build_system_prompt() -> str:
-    # Use a single triple-quoted literal to avoid parser confusion with many nested quotes.
     return """You are the cryptic narrator of an evolving sci-fi alternate reality game (ARG)
 that lives entirely inside a GitHub repository's README.
 
@@ -117,9 +142,16 @@ Strict output format (VERY IMPORTANT):
   "last_challenge_type": "coding|cipher|riddle|logic",
   "last_challenge_solved": <true|false>,
   "new_solvers": ["github-username-1", "github-username-2"],
-  "hall_of_fame_additions": ["github-username-1", "github-username-2"]
+  "hall_of_fame_additions": ["github-username-1", "github-username-2"],
+  "puzzle_answer": "<the correct answer to today's puzzle>",
+  "puzzle_hints": ["hint 1", "hint 2", "hint 3"]
 }
 ```
+
+CRITICAL: You MUST include "puzzle_answer" and "puzzle_hints" in your JSON response.
+- For cipher puzzles: puzzle_answer should be the decoded plaintext
+- For coding puzzles: puzzle_answer should be a description of what the code should do
+- For logic/riddle puzzles: puzzle_answer should be the exact answer
 
 Do not include any other commentary outside the README and the JSON block."""
 
@@ -166,6 +198,8 @@ def build_user_prompt(
         "- Rotate the puzzle type daily between: coding challenge, cipher, riddle, and logic puzzle.",
         "- The puzzle must be solvable by reading the README alone.",
         "- Make the puzzle clearly labeled (e.g. '### Day X Puzzle — <type>').",
+        "- IMPORTANT: In your JSON response, include the correct answer to the puzzle you create.",
+        "- IMPORTANT: In your JSON response, include 3 progressive hints for the puzzle.",
         "",
         "Community rules (must be clearly spelled out in the README):",
         "- Players submit solutions by opening a Pull Request that adds a file under solutions/ based on solutions/TEMPLATE.md.",
@@ -178,7 +212,7 @@ def build_user_prompt(
         "- Include or update a 'Hall of Fame' section listing credited solvers by username.",
         "- Credit today's new solvers and lore suggesters by username somewhere prominent.",
         "",
-        "Remember: At the very end of your response, provide the JSON lore_state block exactly as specified in the system message.",
+        "Remember: At the very end of your response, provide the JSON lore_state block exactly as specified in the system message, INCLUDING puzzle_answer and puzzle_hints.",
     ]
 
     return "\n".join(parts)
@@ -215,7 +249,6 @@ def call_gemini(system_prompt: str, user_prompt: str) -> str:
         raise RuntimeError("GEMINI_API_KEY not set")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    # Gemini doesn't have explicit system role; we embed system instructions into the first part.
     contents = [
         {
             "role": "user",
@@ -315,6 +348,21 @@ def main() -> None:
     # Write README
     README_PATH.write_text(readme.strip() + "\n", encoding="utf-8")
 
+    # Extract and save puzzle answer automatically
+    puzzle_answer = lore_state.get("puzzle_answer")
+    puzzle_hints = lore_state.get("puzzle_hints", [])
+    puzzle_type = lore_state.get("last_challenge_type", "")
+    current_day = lore_state.get("day", lore.get("day", 1))
+    
+    # Save answer to data/answers.json
+    if puzzle_answer or puzzle_type:
+        save_answer(
+            day=current_day,
+            puzzle_type=puzzle_type,
+            answer=puzzle_answer,
+            hints=puzzle_hints if puzzle_hints else []
+        )
+
     # Merge and save lore
     merged = merge_lore(lore, lore_state)
     # Increment day for next run if model didn't already
@@ -325,4 +373,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
